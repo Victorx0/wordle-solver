@@ -1,7 +1,7 @@
 "use client"
 import Image from "next/image";
 import { Input } from "@/components/ui/input";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import useFetch from "@/components/web/useFetch";
 
 const colorClasses: { [key: number]: string } = {
@@ -10,12 +10,71 @@ const colorClasses: { [key: number]: string } = {
   2: "bg-green-500",
 };
 
+// Colour patterns are encoded as base-3 integers (0..242): digit i = colour of letter i.
+const POW3 = [1, 3, 9, 27, 81];
+
+// Reusable scratch buffers so the hot path allocates nothing.
+const letterCounts = new Uint8Array(26);
+const isGreen = new Uint8Array(5);
+const patternBuckets = new Int32Array(243);
+
+const encodeWord = (word: string): Uint8Array =>
+  Uint8Array.from(word, (c) => c.charCodeAt(0) - 97);
+
+const encodeColours = (colours: number[]): number =>
+  colours.reduce((code, c, i) => code + c * POW3[i], 0);
+
+// Returns the colour pattern `guess` would produce against `target`, as a base-3 integer.
+const patternCode = (guess: Uint8Array, target: Uint8Array): number => {
+  letterCounts.fill(0);
+  let code = 0;
+
+  // PASS 1: greens; count the target's non-green letters
+  for (let i = 0; i < 5; i++) {
+    if (guess[i] === target[i]) {
+      isGreen[i] = 1;
+      code += 2 * POW3[i];
+    } else {
+      isGreen[i] = 0;
+      letterCounts[target[i]]++;
+    }
+  }
+
+  // PASS 2: yellows from the remaining letter counts
+  for (let i = 0; i < 5; i++) {
+    if (!isGreen[i] && letterCounts[guess[i]] > 0) {
+      code += POW3[i];
+      letterCounts[guess[i]]--;
+    }
+  }
+
+  return code;
+};
+
+const calculateEntropy = (guess: Uint8Array, possibleWords: Uint8Array[]): number => {
+  patternBuckets.fill(0);
+  for (const word of possibleWords) {
+    patternBuckets[patternCode(guess, word)]++;
+  }
+
+  const total = possibleWords.length;
+  let entropy = 0;
+  for (let i = 0; i < 243; i++) {
+    const count = patternBuckets[i];
+    if (count) {
+      const probability = count / total;
+      entropy -= probability * Math.log2(probability);
+    }
+  }
+  return entropy;
+};
+
 export default function Home() {
   const maxwords = 5
   const [row, setRow] = useState(0)
   const [guess, setGuess] = useState<string[]>(["","","","","",""])
   const [rawAllWordData, setRawAllWordData] = useState<any[]>([])
-  const [allWordData, setAllWordData] = useState<any[]>([])
+  const [allWordData, setAllWordData] = useState<string[]>([])
   const [colours, setColours] = useState<number[][]>([[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]])
   const [filteredWords, setFilteredWords] = useState<string[]>([])
   const [suggestedWord, setSuggestedWord] = useState<string>("tarse")
@@ -40,6 +99,9 @@ export default function Home() {
       setAllWordData(stringList);
     }
   }, [rawAllWordData]);
+
+  // Letter-code version of the word list, computed once when the list loads.
+  const encodedWords = useMemo(() => allWordData.map(encodeWord), [allWordData]);
 
   const changeColours = (numRow : number, num : number) =>{
     if(numRow == row){
@@ -83,36 +145,14 @@ export default function Home() {
     }
   };
 
-  const calculateEntropy = (guess: string, possibleWords: string[]) => {
-    const patternCounts: { [key: string]: number } = {};
-    const total = possibleWords.length;
-
-    // 1. Group all possible words by the color pattern they would generate
-    for (const word of possibleWords) {
-      const pattern = JSON.stringify(checkWord(guess, word));
-      patternCounts[pattern] = (patternCounts[pattern] || 0) + 1;
-    }
-
-    // 2. Calculate Shannon Entropy
-    let entropy = 0;
-    for (const pattern in patternCounts) {
-      const count = patternCounts[pattern];
-      const probability = count / total;
-      entropy -= probability * Math.log2(probability);
-    }
-    // console.log(`entropy : ${entropy}`)
-    return entropy;
-  };
-
 const findBestEntropyGuess = (newFilter : string[]) => {
   let bestWord = "";
   let maxEntropy = -1;
+  const encodedCandidates = newFilter.map(encodeWord);
 
   // We test every valid word to see which one is the best "splitter"
-  // Note: allWordData should be your list of ~12,000 valid strings
-
-  for(let i = 0; i < allWordData.length; i++) {
-    const score = calculateEntropy(allWordData[i], newFilter);
+  for(let i = 0; i < encodedWords.length; i++) {
+    const score = calculateEntropy(encodedWords[i], encodedCandidates);
     if (score > maxEntropy) {
       maxEntropy = score;
       bestWord = allWordData[i];
@@ -124,12 +164,12 @@ const findBestEntropyGuess = (newFilter : string[]) => {
   
   const computeSuggested = () => {
     const currentGuess = guess[row].toLowerCase().trim();
-    const currentColors = colours[row];
+    const encodedGuess = encodeWord(currentGuess);
+    const targetPattern = encodeColours(colours[row]);
 
-    const newFilter = filteredWords.filter((candidate) => {
-      const result = checkWord(currentGuess, candidate);
-      return result.every((val, i) => val === currentColors[i]);
-    });
+    const newFilter = filteredWords.filter(
+      (candidate) => patternCode(encodedGuess, encodeWord(candidate)) === targetPattern
+    );
     setFilteredWords(newFilter)
     if(newFilter.length == 0){
       setSuggestedWord("no word possible")
@@ -145,41 +185,6 @@ const findBestEntropyGuess = (newFilter : string[]) => {
     }
     console.log(newFilter)
   }
-
-  const checkWord = (wordguess: string, targetWord: string): number[] => {
-    const guess = wordguess;
-    const target = targetWord;
-    const ans: number[] = [0, 0, 0, 0, 0];
-    const counts: { [key: string]: number } = {};
-
-    // Fill dictionary with count of letters in the potential target word
-    for (const letter of target) {
-      counts[letter] = (counts[letter] || 0) + 1;
-    }
-
-    // PASS 1: Identify Greens (Correct Position)
-    for (let i = 0; i < 5; i++) {
-      if (guess[i] === target[i]) {
-        ans[i] = 2;
-        counts[guess[i]]--;
-      }
-    }
-
-    // PASS 2: Identify Yellows vs Grays
-    for (let i = 0; i < 5; i++) {
-      if (ans[i] !== 2) {
-        const letter = guess[i];
-        if (counts[letter] > 0) {
-          ans[i] = 1;
-          counts[letter]--;
-        } else {
-          ans[i] = 0;
-        }
-      }
-    }
-
-    return ans;
-  };
 
 
 
