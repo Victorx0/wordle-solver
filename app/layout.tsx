@@ -1,6 +1,17 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Libre_Franklin, Playfair_Display } from "next/font/google";
 import "./globals.css";
+
+const franklin = Libre_Franklin({
+  variable: "--font-franklin",
+  subsets: ["latin"],
+});
+
+const display = Playfair_Display({
+  variable: "--font-display",
+  subsets: ["latin"],
+  weight: ["700", "900"],
+});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,7 +36,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${franklin.variable} ${display.variable} antialiased`}
       >
         {children}
       </body>
