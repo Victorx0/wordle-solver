@@ -1,0 +1,15 @@
+# Words from the original answer list (original-answers.txt) that NYT later
+# pulled from the answer pool. They are still accepted as guesses, so the
+# bundle scrape can't detect the removal; sync-words.mjs un-flags them here.
+# One word per line; '#' starts a comment.
+
+# Feb 2022, after the NYT acquisition (offensive or obscure)
+agora
+fibre
+lynch
+pupal
+slave
+wench
+
+# May 2022 (swapped out of the 2022-05-09 puzzle)
+fetus

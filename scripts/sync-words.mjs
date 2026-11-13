@@ -6,6 +6,12 @@
 //   2. Answers: read from NYT's daily puzzle endpoint
 //      (https://www.nytimes.com/svc/wordle/v2/YYYY-MM-DD.json). Every solution
 //      seen is marked `is_answer = true` (inserted if missing).
+//   3. Pruning: the bundle list includes every playable word, answers too, so
+//      a word that drops out of it can no longer be an answer and is removed,
+//      even if it is flagged `is_answer`. Original answers NYT pulled from the
+//      answer pool while keeping them guessable (data/removed-answers.txt) get
+//      `is_answer = false`. A word seen as a daily solution in this run is
+//      never pruned.
 //
 // Env:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (required; writes need the service role)
@@ -16,6 +22,7 @@
 // Run: node scripts/sync-words.mjs
 
 import { createClient } from "@supabase/supabase-js";
+import { loadRemovedAnswers } from "./removed-answers.mjs";
 
 const WORDLE_URL = "https://www.nytimes.com/games/wordle/index.html";
 const ANSWER_URL = (date) => `https://www.nytimes.com/svc/wordle/v2/${date}.json`;
@@ -167,7 +174,11 @@ async function main() {
   if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   const supabase = createClient(url, key, { auth: { persistSession: false } });
 
-  const [guesses, answers] = await Promise.all([scrapeGuessList(), fetchAnswers()]);
+  const [guesses, answers, removedAnswers] = await Promise.all([
+    scrapeGuessList(),
+    fetchAnswers(),
+    loadRemovedAnswers(),
+  ]);
   const existing = await loadWords(supabase);
   console.log(`Database: ${existing.size} words`);
 
@@ -176,6 +187,7 @@ async function main() {
   const toRestore = []; // back in the guess list (or previously flagged as not guessable)
   const toRemove = []; // dropped from the guess list
   const toMarkAnswer = [];
+  const toUnmarkAnswer = []; // pulled from the answer pool but still guessable
 
   for (const word of new Set([...guesses, ...answers])) {
     const row = existing.get(word);
@@ -188,8 +200,17 @@ async function main() {
   }
 
   for (const [word, row] of existing) {
-    // Past answers stay valid even if NYT trims them from the bundle.
-    if (!guesses.has(word) && row.removed_at === null && row.is_answer !== true) toRemove.push(word);
+    // The bundle is the full playable list, so anything missing from it can't
+    // be answered any more, including old original-list answers.
+    if (!guesses.has(word) && !answers.has(word) && row.removed_at === null) toRemove.push(word);
+  }
+
+  for (const word of removedAnswers) {
+    if (answers.has(word)) {
+      console.warn(`  ${word} is listed in removed-answers.txt but was a recent solution; keeping it`);
+      continue;
+    }
+    if (existing.get(word)?.is_answer === true) toUnmarkAnswer.push(word);
   }
 
   if (toRemove.length > MAX_REMOVALS) {
@@ -209,6 +230,7 @@ async function main() {
   }
   await updateWords(supabase, toRestore, { is_guess: true, removed_at: null }, "Restored");
   await updateWords(supabase, toMarkAnswer, { is_answer: true }, "Marked as answer");
+  await updateWords(supabase, toUnmarkAnswer, { is_answer: false }, "Pulled from answers");
   await updateWords(supabase, toRemove, { is_guess: false, removed_at: now }, "Removed");
 
   console.log(DRY_RUN ? "Dry run complete; no changes written." : "Sync complete.");

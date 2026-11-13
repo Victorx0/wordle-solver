@@ -1,7 +1,8 @@
 // One-time reset: makes `is_answer` match the original 2,315-word Wordle answer
 // list in data/original-answers.txt. Run `sync-words.mjs` with BACKFILL=true
 // afterwards to add every solution NYT has used since (some aren't in the
-// original list).
+// original list). Words NYT later pulled from the answer pool
+// (data/removed-answers.txt) are left un-flagged.
 //
 // Order avoids a window with no answers: flag the original list first, then
 // unflag everything else.
@@ -11,6 +12,7 @@
 
 import { readFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
+import { loadRemovedAnswers } from "./removed-answers.mjs";
 
 const LIST_PATH = new URL("../data/original-answers.txt", import.meta.url);
 const EXPECTED_COUNT = 2315;
@@ -57,6 +59,12 @@ async function main() {
   const supabase = createClient(url, key, { auth: { persistSession: false } });
 
   const original = await loadList();
+  const removed = await loadRemovedAnswers();
+  const notInOriginal = [...removed].filter((w) => !original.has(w));
+  if (notInOriginal.length) {
+    throw new Error(`removed-answers.txt has words not in the original list: ${notInOriginal.join(", ")}`);
+  }
+  for (const w of removed) original.delete(w);
   const flags = await loadAnswerFlags(supabase);
 
   const toInsert = [...original].filter((w) => !flags.has(w));
@@ -64,7 +72,7 @@ async function main() {
   const toUnflag = [...flags].filter(([w, isAnswer]) => isAnswer && !original.has(w)).map(([w]) => w);
   const before = [...flags.values()].filter(Boolean).length;
 
-  console.log(`Original list: ${original.size} words`);
+  console.log(`Original list: ${original.size + removed.size} words, ${removed.size} later pulled -> ${original.size}`);
   console.log(`Currently flagged as answers: ${before}`);
   console.log(`Insert (missing from table): ${toInsert.length}`);
   console.log(`Flag as answer: ${toFlag.length}`);
