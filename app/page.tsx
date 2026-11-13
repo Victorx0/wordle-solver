@@ -2,7 +2,6 @@
 import Image from "next/image";
 import { Input } from "@/components/ui/input";
 import { useState, useEffect, useRef, useMemo } from "react";
-import useFetch from "@/components/web/useFetch";
 
 // Colour patterns are encoded as base-3 integers (0..242): digit i = colour of letter i.
 const POW3 = [1, 3, 9, 27, 81];
@@ -23,7 +22,7 @@ const patternCode = (guess: Uint8Array, target: Uint8Array): number => {
   letterCounts.fill(0);
   let code = 0;
 
-  // PASS 1: greens; count the target's non-green letters
+  // PASS 1: greens; count the target's non-  green letters
   for (let i = 0; i < 5; i++) {
     if (guess[i] === target[i]) {
       isGreen[i] = 1;
@@ -67,35 +66,53 @@ export default function Home() {
   const maxwords = 5
   const [row, setRow] = useState(0)
   const [guess, setGuess] = useState<string[]>(["","","","","",""])
-  const [rawAllWordData, setRawAllWordData] = useState<any[]>([])
+  // Every word accepted as a guess (also the pool searched for the best splitter).
   const [allWordData, setAllWordData] = useState<string[]>([])
   const [colours, setColours] = useState<number[][]>([[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]])
   const [filteredWords, setFilteredWords] = useState<string[]>([])
   const [suggestedWord, setSuggestedWord] = useState<string>("tarse")
   const inputRef = useRef<HTMLInputElement>(null);
-  const {fetchCsvData} = useFetch()
   const [isLoading, setIsLoading] = useState(false);
   const [isError, setisError] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
+  const [isWordsLoading, setIsWordsLoading] = useState(true)
+  const [wordsLoadFailed, setWordsLoadFailed] = useState(false)
 
   useEffect(() =>{
     inputRef.current?.focus()
-    fetchCsvData('/data/words.csv', setRawAllWordData)
-  }, [])
 
-  useEffect(() => { 
-    if (rawAllWordData.length > 0) {
-      const stringList = rawAllWordData
-        .map((item) => item.Word?.toString().trim().toLowerCase()) // Trim whitespace!
-        .filter((word) => word && word.length === 5); // Ensure only 5-letter words
-      
-      setFilteredWords(stringList);
-      setAllWordData(stringList);
+    const controller = new AbortController()
+    const loadWords = async () => {
+      try {
+        const res = await fetch("/api/words", { signal: controller.signal })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data: { guesses?: unknown; answers?: unknown } = await res.json()
+        const clean = (list: unknown): string[] =>
+          Array.isArray(list) ? list.filter((w): w is string => typeof w === "string" && /^[a-z]{5}$/.test(w)) : []
+        const guesses = clean(data.guesses)
+        const answers = clean(data.answers)
+        if (guesses.length === 0) throw new Error("Empty word list")
+
+        setAllWordData(guesses)
+        // Candidates start as the answer list; fall back to all guesses if no answers are flagged.
+        setFilteredWords(answers.length > 0 ? answers : guesses)
+        setWordsLoadFailed(false)
+      } catch (err) {
+        if (controller.signal.aborted) return
+        console.error("Failed to load word list:", err)
+        setWordsLoadFailed(true)
+      } finally {
+        if (!controller.signal.aborted) setIsWordsLoading(false)
+      }
     }
-  }, [rawAllWordData]);
+    loadWords()
+    return () => controller.abort()
+  }, [])
 
   // Letter-code version of the word list, computed once when the list loads.
   const encodedWords = useMemo(() => allWordData.map(encodeWord), [allWordData]);
+  // O(1) lookup for guess validation.
+  const guessSet = useMemo(() => new Set(allWordData), [allWordData]);
 
   const changeColours = (numRow : number, num : number) =>{
     if(numRow == row){
@@ -121,8 +138,13 @@ export default function Home() {
 
   const handleKeyDown = (e: any) => {
     if (e.key === "Enter") {
-      if (guess[row].length === 5) {
-        if(!allWordData.includes(guess[row])){
+      if (isWordsLoading || wordsLoadFailed || isLoading) {
+        setisError(true)
+        setErrorMessage(wordsLoadFailed ? "Word list unavailable" : "Still loading…")
+      } else if (row >= guess.length) {
+        return
+      } else if (guess[row].length === 5) {
+        if(!guessSet.has(guess[row])){
           console.log("Must be valid word")
           setisError(true)
           setErrorMessage("Not in word list")
@@ -201,10 +223,14 @@ const findBestEntropyGuess = (newFilter : string[]) => {
       <main className="w-full max-w-xl flex-1 flex flex-col items-center px-4 py-4 sm:py-6 gap-4 sm:gap-6">
         {/* Stats */}
         <section className="w-full grid grid-cols-2 border border-(--w-border) divide-x divide-(--w-border) min-h-19">
-          {isLoading ? (
+          {wordsLoadFailed ? (
+            <div className="col-span-2 flex items-center justify-center text-sm text-(--w-muted) px-4 text-center">
+              Couldn&apos;t load the word list. Please refresh to try again.
+            </div>
+          ) : isLoading || isWordsLoading ? (
             <div className="col-span-2 flex items-center justify-center gap-2 text-sm text-(--w-muted)">
               <div className="animate-spin h-4 w-4 border-2 border-(--w-green) border-t-transparent rounded-full" />
-              <span>Calculating best guess…</span>
+              <span>{isWordsLoading ? "Loading word list…" : "Calculating best guess…"}</span>
             </div>
           ) : (
             <>

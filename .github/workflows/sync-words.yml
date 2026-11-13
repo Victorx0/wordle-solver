@@ -1,0 +1,59 @@
+name: Sync Wordle words
+
+on:
+  schedule:
+    # 07:15 UTC daily: after midnight in every US timezone, so today's puzzle is live.
+    - cron: "15 7 * * *"
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Fetch every answer since launch (2021-06-19), not just the last week"
+        type: boolean
+        default: false
+      seed_original_answers:
+        description: "ONE-TIME: reset is_answer to the original 2,315-word list, then backfill all past solutions"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Report changes without writing to the database"
+        type: boolean
+        default: false
+
+concurrency:
+  group: sync-words
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Seed original answer list
+        if: ${{ inputs.seed_original_answers }}
+        run: node scripts/seed-original-answers.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+
+      - name: Sync words table
+        run: node scripts/sync-words.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Seeding always backfills so every past solution is re-flagged.
+          BACKFILL: ${{ (inputs.backfill || inputs.seed_original_answers) && 'true' || 'false' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          ANSWER_LOOKBACK_DAYS: "7"
