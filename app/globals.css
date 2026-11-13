@@ -155,6 +155,71 @@
 .tile[data-clickable="true"] { cursor: pointer; }
 .tile[data-clickable="true"]:active { transform: scale(0.94); }
 
+/* ---------- Guess distribution chart ---------- */
+.dist-row {
+  display: grid;
+  grid-template-columns: 1.25rem 1fr 6.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2rem;
+  transition: opacity 150ms ease;
+}
+.dist-row[data-dimmed="true"] { opacity: 0.55; }
+
+.dist-label {
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.dist-track {
+  position: relative;
+  height: 1.375rem;
+  border-left: 1px solid var(--w-border-filled);
+}
+
+.dist-bar {
+  height: 100%;
+  background: var(--w-green);
+  border-radius: 0 4px 4px 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1), filter 150ms ease;
+  transition-delay: calc(var(--i) * 90ms), 0ms;
+}
+.dist-chart[data-visible="true"] .dist-bar { transform: scaleX(1); }
+.dist-row[data-active="true"] .dist-bar { filter: brightness(0.92); }
+
+.dist-value {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 400ms ease, transform 400ms ease;
+  transition-delay: calc(300ms + var(--i) * 90ms);
+}
+.dist-chart[data-visible="true"] .dist-value { opacity: 1; transform: none; }
+
+.dist-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 10;
+  white-space: nowrap;
+  pointer-events: none;
+  background: var(--w-ink);
+  color: #fff;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dist-bar,
+  .dist-value { transition: none; }
+}
+
 .mini-tile {
   width: 1.75rem;
   height: 1.75rem;

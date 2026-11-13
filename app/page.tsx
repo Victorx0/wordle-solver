@@ -1,6 +1,7 @@
 "use client"
 import Image from "next/image";
 import { Input } from "@/components/ui/input";
+import GuessDistribution from "@/components/web/GuessDistribution";
 import { useState, useEffect, useRef, useMemo } from "react";
 
 // Colour patterns are encoded as base-3 integers (0..242): digit i = colour of letter i.
@@ -324,6 +325,7 @@ const findBestEntropyGuess = (newFilter : string[]) => {
             </div>
           </div>
         </section>
+        <GuessDistribution />
       </footer>
     </div>
   );
